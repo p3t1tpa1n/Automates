@@ -10,8 +10,7 @@ Automate = {
     ],
     "initial": 0,
     "finaux": [2,3],
-    "alphabet": ["$","a","b","c"]
-}
+    "alphabet": ["$","a","b","c"]}
 atrice = [[0,1,-1],[2,-1,-1],[-1,-1,2]]
 # version complète de matrice
 Etats_Finaux=[2]
