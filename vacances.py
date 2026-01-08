@@ -76,39 +76,57 @@ def Complementaire(automate):
 # on alloue de l'espace mémoire  pour nbEtats,nbChar, mais surtout pour la matrice (de n par m, que l'on transforme en matrice de n+1 par m), donc on occupe n*m+2 espace mémoires, et on a une complexitée spatiale en O((n+1)*m)+2
 #=O(n*m)
 
-def Analyse_mot(automate,mot, verbose=False):
-    matrice=automate["matrice"]
-    finaux=automate["finaux"]
+def Analyse_mot(automate, mot, verbose=False):
+    """
+    Analyse un mot avec un automate (déterministe ou non-déterministe).
+    Gère le non-déterminisme en explorant tous les chemins possibles.
+    """
+    matrice = automate["matrice"]
+    finaux = set(automate["finaux"])
     initial = automate.get("Initial", automate.get("initial", 0))
     
     if verbose:
         print(automate)
     
-    Etat = initial  #on commence l'analyse à partir de l'état initial de l'automate
-    """
-    i=0
-    while i<len(mot):
-        S=mot[i]
-        print(S)
-        Etat=matrice[Etat][S]
-        if Etat== -1:
-            return False
-        i=i+1
-    return Etat in finaux
-    """
-    for i in mot:
+    if not mot:
+        # Mot vide : accepter si l'état initial est final
+        return initial in finaux
+    
+    # Ensemble d'états actuels (pour gérer le non-déterminisme)
+    etats_courants = {initial}
+    
+    for symbole_idx in mot:
         if verbose:
-            print("i=",i)
-        if Etat >= len(matrice) or i >= len(matrice[0]):
+            print(f"Symbole index: {symbole_idx}, États courants: {etats_courants}")
+        
+        if symbole_idx >= len(matrice[0]) if matrice else True:
             return False
-        Etat=matrice[Etat][i]
-        if Etat== -1:
+        
+        nouveaux_etats = set()
+        for etat in etats_courants:
+            if etat >= len(matrice):
+                continue
+            
+            trans = matrice[etat][symbole_idx]
+            
+            if trans == -1:
+                continue
+            elif isinstance(trans, list):
+                # Non-déterministe : plusieurs destinations possibles
+                nouveaux_etats.update([d for d in trans if d != -1])
+            else:
+                # Déterministe : une seule destination
+                nouveaux_etats.add(trans)
+        
+        if not nouveaux_etats:
+            if verbose:
+                print("Aucune transition possible, mot refusé")
             return False
-    if Etat in finaux:
-        return True
-    if verbose:
-        print("ici blocquage",i)
-    return False
+        
+        etats_courants = nouveaux_etats
+    
+    # Vérifier si au moins un des états finaux est dans les états courants
+    return bool(etats_courants & finaux)
 
 def save_automates(fichier, automates_dict, fusionner=False):
     """
@@ -309,229 +327,615 @@ def Determinister(automate):
                 finaux_dict.append(courant)
         i += 1
     
-    # Conversion en format liste de listes
-    mapping = {etat: idx for idx, etat in enumerate(etats_a_explorer)}
-    nouvelle_matrice = []
-    for etat in etats_a_explorer:
-        ligne = []
-        for trans in matrice_dict[etat]:
-            ligne.append(mapping.get(trans, -1) if trans else -1)
-        nouvelle_matrice.append(ligne)
+    # Conversion en format liste de listes via regularisation
+    automate_temp = {
+        "matrice": matrice_dict,
+        "initial": etat_initial,
+        "finaux": finaux_dict,
+        "alphabet": automate.get("alphabet", [])
+    }
+    automate_final = regularisation(automate_temp)
     
-    nouveaux_finaux = [mapping[f] for f in finaux_dict if f in mapping]
+    # Convertir "initial" en "Initial" pour cohérence avec le reste du code
+    if "initial" in automate_final:
+        automate_final["Initial"] = automate_final.pop("initial")
+    
+    return automate_final
+
+
+def eliminer_transitions_epsilon(automate, epsilon="EPS"):
+    """
+    Supprime les transitions epsilon d'un automate non déterministe.
+    
+    Args:
+        automate: Automate avec format {"matrice": liste de listes, "alphabet": liste, "finaux": liste, "Initial": int}
+        epsilon: Symbole epsilon (peut être "$", "epsilon", "eps", "ε", "EPS")
+    
+    Returns:
+        Automate équivalent sans transitions epsilon (format liste de listes)
+    """
+    matrice = automate["matrice"]
+    alphabet = automate.get("alphabet", [])
+    finaux = set(automate["finaux"])
+    initial = automate.get("Initial", automate.get("initial", 0))
+    
+    # Détecter si l'automate a une colonne epsilon
+    epsilon_index = None
+    epsilon_symbol = None
+    if alphabet:
+        for i, sym in enumerate(alphabet):
+            if sym in ("$", "epsilon", "eps", "ε", "EPS", epsilon):
+                epsilon_index = i
+                epsilon_symbol = sym
+                break
+    
+    # Si pas de colonne epsilon, retourner l'automate tel quel
+    if epsilon_index is None:
+        return automate.copy()
+    
+    n = len(matrice)
+    # Convertir en format dictionnaire pour utiliser l'algorithme
+    transitions = {}
+    
+    # S'assurer que tous les états sont inclus (0 à n-1)
+    etats = set(range(n))
+    etats.add(initial)
+    etats.update(finaux)
+    
+    for etat in range(n):
+        if etat >= len(matrice):
+            continue
+        for symbole_idx, symbole in enumerate(alphabet):
+            if symbole_idx >= len(matrice[etat]):
+                continue
+            dests = matrice[etat][symbole_idx]
+            # Convertir les destinations en liste
+            if dests == -1:
+                continue
+            elif isinstance(dests, list):
+                destinations = [d for d in dests if d != -1 and isinstance(d, int) and 0 <= d < n]
+            else:
+                destinations = [dests] if dests != -1 and isinstance(dests, int) and 0 <= dests < n else []
+            
+            if destinations:
+                transitions[(etat, symbole)] = destinations
+                etats.update(destinations)
+    
+    # ---- 2. Extraire transitions epsilon ----
+    eps = {}
+    normales = {}
+    
+    for (e, s), dests in transitions.items():
+        if s == epsilon_symbol:
+            eps.setdefault(e, []).extend(dests)
+        else:
+            normales.setdefault(e, []).append((s, dests))
+    
+    # ---- 3. Fermeture epsilon ----
+    def fermeture_epsilon(e):
+        fermeture = {e}
+        pile = [e]
+        while pile:
+            x = pile.pop()
+            # Ne considérer que les états dans la plage valide
+            if x >= n or x < 0:
+                continue
+            for y in eps.get(x, []):
+                if 0 <= y < n and y not in fermeture:
+                    fermeture.add(y)
+                    pile.append(y)
+        return fermeture
+    
+    fermetures = {e: fermeture_epsilon(e) for e in etats if 0 <= e < n}
+    
+    # ---- 4. Reconstruire les transitions sans epsilon ----
+    nouvelles_transitions = {}
+    
+    def ajouter(e, s, d):
+        if (e, s) not in nouvelles_transitions:
+            nouvelles_transitions[(e, s)] = []
+        if d not in nouvelles_transitions[(e, s)]:
+            nouvelles_transitions[(e, s)].append(d)
+    
+    # Appliquer les règles de fermeture epsilon
+    for e in range(n):  # Ne traiter que les états valides
+        if e not in fermetures:
+            fermetures[e] = {e}
+        
+        # règle des états finaux : si un état peut atteindre un état final par epsilon, il devient final
+        if fermetures[e] & finaux:
+            finaux.add(e)
+        
+        # Pour chaque état dans la fermeture epsilon de e
+        for e2 in fermetures[e]:
+            # Prendre toutes les transitions normales depuis e2
+            for (s, dests) in normales.get(e2, []):
+                for d in dests:
+                    if 0 <= d < n:  # Ne considérer que les destinations valides
+                        # Pour chaque destination d, prendre sa fermeture epsilon
+                        if d not in fermetures:
+                            fermetures[d] = {d}
+                        for d2 in fermetures[d]:
+                            if 0 <= d2 < n:  # Ne garder que les états valides
+                                ajouter(e, s, d2)
+    
+    # ---- 5. Convertir en format liste de listes ----
+    # Nouvel alphabet sans epsilon
+    nouvel_alphabet = [s for s in alphabet if s != epsilon_symbol]
+    
+    # Créer la nouvelle matrice (même nombre d'états)
+    nouvelle_matrice = [[-1] * len(nouvel_alphabet) for _ in range(n)]
+    
+    for (etat, symbole), dests in nouvelles_transitions.items():
+        if symbole in nouvel_alphabet:
+            symbole_idx = nouvel_alphabet.index(symbole)
+            if len(dests) == 1:
+                nouvelle_matrice[etat][symbole_idx] = dests[0]
+            elif len(dests) > 1:
+                # Non-déterministe : on garde la liste
+                nouvelle_matrice[etat][symbole_idx] = dests
+    
+    # Retourner l'automate sans epsilon
+    # Filtrer les états finaux pour ne garder que ceux dans la plage valide
+    finaux_valides = sorted([f for f in finaux if 0 <= f < n])
     
     return {
         "matrice": nouvelle_matrice,
-        "finaux": nouveaux_finaux,
-        "Initial": mapping.get(etat_initial, 0)
-    }
-
-
-def epsilon_closure(eps, states):
-    """Retourne la ε-clôture d'un ensemble d'états."""
-    vus = set(states)
-    file = list(states)
-    while file:
-        q = file.pop(0)
-        for d in eps.get(q, []):
-            if d not in vus:
-                vus.add(d)
-                file.append(d)
-    return vus
-
-
-def epsilon_closure_automate(auto):
-    """
-    Prend un automate avec epsilon (colonne 0 = ε)
-    Renvoie un automate SANS epsilon.
-    """
-    matrice = auto["matrice"]
-    finaux = set(auto["finaux"])
-    initial = auto.get("Initial", 0)
-
-    n = len(matrice)
-    sigma = len(matrice[0]) - 1   # colonne 0 = epsilon → on l'enlève
-
-    # eps[q] = états atteignables en 1 epsilon-transition
-    eps = {}
-    for q in range(n):
-        dest = matrice[q][0]
-        if dest == -1:
-            eps[q] = set()
-        else:
-            eps[q] = {dest}
-
-    # ε-clôtures
-    closures = [epsilon_closure(eps, {q}) for q in range(n)]
-
-    # trans[q][a] = ensemble d'états atteignables par le symbole a (sans ε)
-    trans = [[set() for _ in range(sigma)] for _ in range(n)]
-
-    for q in range(n):
-        for p in closures[q]:
-            for a in range(1, sigma + 1):
-                d = matrice[p][a]
-                if d != -1:
-                    for d2 in closures[d]:
-                        trans[q][a - 1].add(d2)
-
-    # Nouveaux finaux
-    new_finaux = {q for q in range(n) if closures[q] & finaux}
-
-    # Conversion en matrice d'entiers (on ignore le non-déterminisme multiple)
-    new_mat = []
-    for q in range(n):
-        row = []
-        for a in range(sigma):
-            if len(trans[q][a]) == 1:
-                row.append(next(iter(trans[q][a])))
-            elif len(trans[q][a]) == 0:
-                row.append(-1)
-            else:
-                # plusieurs états possibles -> ici on simplifie en -1
-                row.append(-1)
-        new_mat.append(row)
-
-    alpha = auto.get("alphabet", [])
-    new_alpha = alpha[1:] if len(alpha) > 1 else []
-
-    return {
-        "matrice": new_mat,
-        "finaux": sorted(new_finaux),
-        "Initial": initial,
-        "alphabet": new_alpha
-    }
-
-
-def supprimer_epsilon(automate):
-    """
-    Renvoie un automate équivalent SANS epsilon.
-    Utilise epsilon_closure_automate.
-    """
-    matrice = automate["matrice"]
-    alphabet = automate.get("alphabet", None)
-    n = len(matrice)
-    m = len(matrice[0])
-
-    # Cas 1 : l'automate a déjà une colonne epsilon
-    if alphabet is not None and len(alphabet) > 0 and alphabet[0] in ("$", "epsilon", "eps", "ε"):
-        auto_eps = {
-            "matrice": [ligne[:] for ligne in matrice],
-            "finaux": automate["finaux"][:],
-            "Initial": automate.get("Initial", automate.get("initial", 0)),
-            "alphabet": alphabet[:]
-        }
-        res = epsilon_closure_automate(auto_eps)
-        return res
-
-    # Cas 2 : pas de colonne epsilon, on en crée une artificielle
-    new_mat = []
-    for i in range(n):
-        new_mat.append([-1] + matrice[i][:])   # colonne epsilon à -1
-
-    if alphabet is not None:
-        new_alpha = ["$"] + alphabet[:]
-    else:
-        new_alpha = ["$"] + [f"s{i}" for i in range(m)]
-
-    auto_eps = {
-        "matrice": new_mat,
-        "finaux": automate["finaux"][:],
-        "Initial": automate.get("Initial", automate.get("initial", 0)),
-        "alphabet": new_alpha
-    }
-
-    res = epsilon_closure_automate(auto_eps)
-    return res
-
-def add_epsilon_column(automate):
-    """Ajoute une colonne epsilon (tout -1) en position 0."""
-    mat = automate["matrice"]
-    nbEtats = len(mat)
-
-    new_mat = []
-    for i in range(nbEtats):
-        new_mat.append([-1] + mat[i][:])
-
-    alphabet = automate.get("alphabet", None)
-    if alphabet is not None:
-        new_alphabet = ["$"] + alphabet[:]
-    else:
-        new_alphabet = None
-
-    initial = automate.get("Initial", automate.get("initial", 0))
-
-    return {
-        "matrice": new_mat,
-        "finaux": automate["finaux"][:],
-        "Initial": initial,
-        "alphabet": new_alphabet
+        "finaux": finaux_valides,
+        "Initial": initial if 0 <= initial < n else 0,
+        "alphabet": nouvel_alphabet
     }
 def concatener(automate1, automate2):
     """
     Concatène deux automates automate1 et automate2.
     Résultat : un automate SANS epsilon tel que L = L(automate1) · L(automate2)
     """
-
     # 1) On supprime d'abord les epsilon dans les deux automates
-    auto1_clean = supprimer_epsilon(automate1)
-    auto2_clean = supprimer_epsilon(automate2)
+    auto1_clean = eliminer_transitions_epsilon(automate1.copy())
+    auto2_clean = eliminer_transitions_epsilon(automate2.copy())
 
-    # 2) On ajoute une colonne epsilon pour la concaténation
-    eps_1 = add_epsilon_column(auto1_clean)
-    eps_2 = add_epsilon_column(auto2_clean)
-
-    mat1 = eps_1["matrice"]
-    mat2 = eps_2["matrice"]
+    mat1 = auto1_clean["matrice"]
+    mat2 = auto2_clean["matrice"]
     l1 = len(mat1)
     l2 = len(mat2)
-    nbCaracteres = len(mat1[0])  # epsilon + alphabet
-
-    if len(mat2[0]) != nbCaracteres:
-        raise ValueError("concatener : les deux automates doivent avoir le même nombre de colonnes (même alphabet).")
-
+    
+    # Fusionner les alphabets
+    alpha1 = auto1_clean.get("alphabet", [])
+    alpha2 = auto2_clean.get("alphabet", [])
+    
+    # Créer un alphabet commun (union des deux)
+    alphabet_commun = []
+    for s in alpha1:
+        if s not in alphabet_commun:
+            alphabet_commun.append(s)
+    for s in alpha2:
+        if s not in alphabet_commun:
+            alphabet_commun.append(s)
+    
+    # Ajouter epsilon en première position
+    epsilon_symbole = "$"
+    if epsilon_symbole not in alphabet_commun:
+        alphabet_commun = [epsilon_symbole] + alphabet_commun
+    else:
+        # Déplacer epsilon en première position
+        alphabet_commun.remove(epsilon_symbole)
+        alphabet_commun = [epsilon_symbole] + alphabet_commun
+    
+    nb_caracteres = len(alphabet_commun)
+    
+    # Étendre les matrices pour avoir le même alphabet
+    def etendre_matrice(automate, alphabet_cible, alphabet_source):
+        mat = automate["matrice"]
+        nouvelle_mat = []
+        for ligne in mat:
+            nouvelle_ligne = [-1] * len(alphabet_cible)
+            for i, sym in enumerate(alphabet_source):
+                if sym in alphabet_cible:
+                    idx = alphabet_cible.index(sym)
+                    nouvelle_ligne[idx] = ligne[i]
+            nouvelle_mat.append(nouvelle_ligne)
+        return nouvelle_mat
+    
+    # Étendre les matrices
+    if alpha1:
+        mat1_etendue = etendre_matrice(auto1_clean, alphabet_commun, alpha1)
+    else:
+        mat1_etendue = [[-1] * nb_caracteres for _ in range(l1)]
+    
+    if alpha2:
+        mat2_etendue = etendre_matrice(auto2_clean, alphabet_commun, alpha2)
+    else:
+        mat2_etendue = [[-1] * nb_caracteres for _ in range(l2)]
+    
+    # Construire la nouvelle matrice avec epsilon en première colonne
+    epsilon_idx = 0  # epsilon est en position 0
     new_mat = []
-
+    
     # Copier auto1
     for i in range(l1):
-        new_mat.append(mat1[i][:])
-
+        new_mat.append(mat1_etendue[i][:])
+    
     # Copier auto2 avec décalage d'états (+l1)
     for i in range(l2):
         ligne = []
-        for j in range(nbCaracteres):
-            dest = mat2[i][j]
+        for j in range(nb_caracteres):
+            dest = mat2_etendue[i][j]
             if dest == -1:
                 ligne.append(-1)
             else:
                 ligne.append(dest + l1)
         new_mat.append(ligne)
-
+    
     # Transition epsilon : des finaux de auto1 vers l'initial de auto2 (décalé)
-    init2 = eps_2["Initial"]
-    for f in eps_1["finaux"]:
-        new_mat[f][0] = init2 + l1   # colonne 0 = epsilon
-
+    init2 = auto2_clean.get("Initial", auto2_clean.get("initial", 0))
+    for f in auto1_clean["finaux"]:
+        if new_mat[f][epsilon_idx] == -1:
+            new_mat[f][epsilon_idx] = init2 + l1
+        else:
+            # Plusieurs transitions epsilon : convertir en liste
+            if isinstance(new_mat[f][epsilon_idx], list):
+                if (init2 + l1) not in new_mat[f][epsilon_idx]:
+                    new_mat[f][epsilon_idx].append(init2 + l1)
+            else:
+                new_mat[f][epsilon_idx] = [new_mat[f][epsilon_idx], init2 + l1]
+    
     # Nouveaux finaux : ceux de auto2, décalés
-    new_finaux = [q + l1 for q in eps_2["finaux"]]
-
-    # Alphabet : on garde celui de auto1 si possible
-    new_alphabet = eps_1.get("alphabet", eps_2.get("alphabet", None))
-    new_initial = eps_1["Initial"]
-
+    new_finaux = [q + l1 for q in auto2_clean["finaux"]]
+    
+    # Nouvel état initial
+    new_initial = auto1_clean.get("Initial", auto1_clean.get("initial", 0))
+    
     automate_eps = {
         "matrice": new_mat,
         "finaux": new_finaux,
         "Initial": new_initial,
-        "alphabet": new_alphabet
+        "alphabet": alphabet_commun
     }
-
+    
     # 3) On supprime les epsilon dans l'automate obtenu
-    automate_propre = supprimer_epsilon(automate_eps)
+    automate_propre = eliminer_transitions_epsilon(automate_eps, epsilon=epsilon_symbole)
     return automate_propre
 
 def concatenation_alphabet(automate1, automate2):
     """Concaténation des alphabets de deux automates."""
+
+
+def produit(A1, A2):
+    """
+    Calcule le produit de deux automates.
+    Le produit accepte les mots acceptés par les DEUX automates simultanément.
+    
+    Args:
+        A1, A2: Automates avec format {"matrice": liste de listes, "alphabet": liste, "finaux": liste, "Initial": int}
+    
+    Returns:
+        Automate produit avec états en tuples, ou 0 si les alphabets n'ont pas de caractères communs
+    """
+    # Utiliser "Initial" ou "initial"
+    initial1 = A1.get("Initial", A1.get("initial", 0))
+    initial2 = A2.get("Initial", A2.get("initial", 0))
+    
+    # Utiliser set pour pouvoir faire des opérations sur les ensembles, on utilise ensuite list pour transformer le résultat en liste
+    alphabet_commun = list(set(A1.get("alphabet", [])) & set(A2.get("alphabet", [])))
+    
+    # On vérifie que les alphabets ont au moins un caractère en commun
+    if not alphabet_commun:
+        # Pas de caractères communs entre les deux alphabets
+        return 0
+    
+    prAutomate = {
+        'matrice': {},
+        'initial': (initial1, initial2),
+        'finaux': [],
+        'alphabet': alphabet_commun
+    }
+    
+    # On crée des index pour les deux alphabets pour éviter les erreurs si les caractères ne sont pas dans le même ordre
+    idx1 = {a: i for i, a in enumerate(A1.get("alphabet", []))}
+    idx2 = {a: i for i, a in enumerate(A2.get("alphabet", []))}
+    
+    # Fonction helper pour extraire les états de destination (gère le non-déterminisme)
+    def obtenir_etats(trans):
+        """Extrait les états de destination d'une transition."""
+        if trans == -1:
+            return []
+        elif isinstance(trans, list):
+            return [e for e in trans if e != -1]
+        else:
+            return [trans]
+    
+    # Comme vu en cours, on part de l'état initial, ensuite on teste les différents caractères pour cette transition, et on enregistre tous les états valides
+    # On doit parcourir tous les états des 2 automates, on n'a pas besoin de tester les caractères non présents dans l'alphabet commun
+    
+    etats_à_explorer = [(initial1, initial2)]
+    etats_visités = set()
+    i = 0
+    
+    while i < len(etats_à_explorer):
+        courant = etats_à_explorer[i]
+        q1, q2 = courant
+        
+        # Éviter de retraiter le même état
+        if courant in etats_visités:
+            i += 1
+            continue  # Sauter cette itération
+        
+        etats_visités.add(courant)
+        
+        # On rajoute les états finaux
+        if q1 in A1.get("finaux", []) and q2 in A2.get("finaux", []):
+            prAutomate['finaux'].append(courant)
+        
+        ligne = []
+        for c in alphabet_commun:
+            # Gérer les indices d'alphabet
+            if c not in idx1 or c not in idx2:
+                ligne.append((-1, -1))
+                continue
+            
+            idx1_c = idx1[c]
+            idx2_c = idx2[c]
+            
+            # Vérifier les limites de la matrice
+            if q1 >= len(A1["matrice"]) or q2 >= len(A2["matrice"]):
+                ligne.append((-1, -1))
+                continue
+            
+            if idx1_c >= len(A1["matrice"][q1]) or idx2_c >= len(A2["matrice"][q2]):
+                ligne.append((-1, -1))
+                continue
+            
+            etat_suivant_A1_trans = A1["matrice"][q1][idx1_c]
+            etat_suivant_A2_trans = A2["matrice"][q2][idx2_c]
+            
+            # Extraire les listes d'états
+            etats_A1 = obtenir_etats(etat_suivant_A1_trans)
+            etats_A2 = obtenir_etats(etat_suivant_A2_trans)
+            
+            # Pour le produit déterministe, on prend toutes les combinaisons
+            # Mais si un automate est non-déterministe, on doit créer plusieurs états
+            # Pour simplifier, on prend le premier état de chaque liste si disponible
+            # Pour un vrai produit non-déterministe, il faudrait créer tous les produits cartésiens
+            if not etats_A1 or not etats_A2:
+                nouvel_etat = (-1, -1)
+            else:
+                # Pour l'instant, on prend le premier état de chaque liste (déterministe)
+                # Pour un vrai produit non-déterministe, il faudrait créer tous les tuples possibles
+                nouvel_etat = (etats_A1[0], etats_A2[0])
+                
+                # Si les deux sont non-déterministes, on crée plusieurs transitions
+                # Mais comme on retourne une ligne simple, on garde juste le premier tuple
+                # Un vrai produit non-déterministe nécessiterait une structure plus complexe
+            
+            ligne.append(nouvel_etat)
+            
+            if nouvel_etat not in etats_à_explorer and nouvel_etat != (-1, -1):
+                etats_à_explorer.append(nouvel_etat)
+        
+        prAutomate['matrice'][courant] = ligne
+        
+        # On parcourt les transitions des caractères pour chaque automate
+        i = i + 1
+    
+    return prAutomate
+
+
+def regularisation_tuples(A):
+    """
+    Transforme un automate dont les états sont des tuples (q1, q2)
+    en un automate numéroté avec des entiers.
+    Les états (-1, -1) sont considérés comme invalides.
+    
+    Args:
+        A: Automate avec format {"matrice": dict, "initial": tuple, "finaux": list, "alphabet": list}
+    
+    Returns:
+        Automate avec format {"matrice": liste de listes, "Initial": int, "finaux": list, "alphabet": list}
+    """
+    correspondance = {}
+    compteur = 0
+    
+    # Récupérer tous les états (clés du dictionnaire)
+    etats = list(A["matrice"].keys())
+    
+    # Trier pour une numérotation stable entre plusieurs exécutions du programme sur le même automate
+    etats = sorted(etats)
+    
+    # Construire la correspondance tuple vers entier
+    for etat in etats:
+        if isinstance(etat, tuple) and (-1 in etat):
+            continue
+        correspondance[etat] = compteur
+        compteur += 1
+    
+    # Ajouter l'état initial s'il n'est pas déjà présent
+    if isinstance(A["initial"], tuple) and -1 not in A["initial"] and A["initial"] not in correspondance:
+        correspondance[A["initial"]] = compteur
+        compteur += 1
+    
+    # Construire la nouvelle matrice indexée
+    nouvelle_matrice = []
+    for etat in etats:
+        ligne = []
+        for a in A["matrice"][etat]:
+            if isinstance(a, tuple) and -1 in a:
+                ligne.append(-1)
+            elif isinstance(a, tuple) and a in correspondance:
+                ligne.append(correspondance[a])
+            elif isinstance(a, tuple):
+                # État non trouvé dans correspondance, mettre -1
+                ligne.append(-1)
+            else:
+                ligne.append(-1)
+        nouvelle_matrice.append(ligne)
+    
+    # États finaux
+    nouveaux_finaux = []
+    for f in A.get("finaux", []):
+        if isinstance(f, tuple) and f in correspondance:
+            nouveaux_finaux.append(correspondance[f])
+    
+    # État initial
+    if isinstance(A["initial"], tuple) and -1 in A["initial"]:
+        nouvel_initial = -1
+    elif A["initial"] in correspondance:
+        nouvel_initial = correspondance[A["initial"]]
+    else:
+        nouvel_initial = 0
+    
+    return {
+        "matrice": nouvelle_matrice,
+        "Initial": nouvel_initial,  # Utiliser "Initial" pour cohérence
+        "finaux": nouveaux_finaux,
+        "alphabet": A.get("alphabet", [])
+    }
+
+
+def nettoyer(automate):
+    """
+    Supprime les états inutiles d'un automate.
+    
+    Conserve uniquement les états accessibles depuis l'état initial
+    et co-accessibles (menant à un état final).
+    
+    Args:
+        automate: Automate avec format {"matrice": liste de listes, "alphabet": liste, "finaux": liste, "Initial": int}
+    
+    Returns:
+        Nouvel automate nettoyé (ne modifie pas l'original)
+    """
+    # Faire une copie pour ne pas modifier l'original
+    automate = automate.copy()
+    automate["matrice"] = [ligne[:] for ligne in automate["matrice"]]
+    automate["finaux"] = automate["finaux"][:]
+    
+    matrice = automate["matrice"]
+    etat_initial = automate.get("Initial", automate.get("initial", 0))
+    etats_finaux = set(automate.get("finaux", []))
+    
+    if not matrice or etat_initial >= len(matrice):
+        return automate
+    
+    # Fonction helper pour extraire les états de destination (gère le non-déterminisme)
+    def obtenir_etats(trans):
+        """Extrait les états de destination d'une transition."""
+        if trans == -1:
+            return []
+        elif isinstance(trans, list):
+            return [e for e in trans if e != -1 and isinstance(e, int)]
+        else:
+            return [trans] if isinstance(trans, int) and trans != -1 else []
+    
+    # États atteignables depuis l'état initial
+    etats_atteignables = {etat_initial}
+    a_traiter = [etat_initial]
+    
+    # On effectue un parcours de l'automate à partir de l'état initial
+    while a_traiter:
+        etat_courant = a_traiter.pop()
+        
+        # Vérifier les limites
+        if etat_courant >= len(matrice):
+            continue
+        
+        # On parcourt toutes les transitions sortantes de cet état
+        for symbole in range(len(matrice[etat_courant])):
+            etat_suivant_trans = matrice[etat_courant][symbole]
+            etats_suivants = obtenir_etats(etat_suivant_trans)
+            
+            # Si la transition existe et mène à un nouvel état
+            for etat_suivant in etats_suivants:
+                if etat_suivant not in etats_atteignables:
+                    etats_atteignables.add(etat_suivant)
+                    a_traiter.append(etat_suivant)
+    
+    # États co-atteignables vers un état final
+    etats_co_atteignables = set(etats_finaux)
+    a_explorer = list(etats_finaux)
+    
+    # On part des états finaux et on remonte les transitions
+    while a_explorer:
+        etat_cible = a_explorer.pop()
+        
+        # Parcourir tous les états sources
+        for etat_source in range(len(matrice)):
+            if etat_source >= len(matrice):
+                continue
+            
+            # Vérifier si une transition mène de etat_source vers etat_cible
+            for symbole in range(len(matrice[etat_source])):
+                trans = matrice[etat_source][symbole]
+                etats_dest = obtenir_etats(trans)
+                
+                if etat_cible in etats_dest and etat_source not in etats_co_atteignables:
+                    etats_co_atteignables.add(etat_source)
+                    a_explorer.append(etat_source)
+    
+    # États utiles : accessibles ET co-accessibles
+    etats_utiles = etats_atteignables & etats_co_atteignables
+    
+    # Si l'état initial n'est pas dans les états utiles, il n'y a pas de chemin valide
+    if etat_initial not in etats_utiles:
+        # Retourner un automate vide avec juste l'état initial
+        return {
+            "matrice": [[-1] * (len(matrice[0]) if matrice else 0)],
+            "finaux": [],
+            "Initial": 0,
+            "alphabet": automate.get("alphabet", [])
+        }
+    
+    etats_utiles_tries = sorted(etats_utiles)
+    
+    # Correspondance anciens indices → nouveaux indices
+    correspondance = {
+        ancien_etat: nouvel_indice
+        for nouvel_indice, ancien_etat in enumerate(etats_utiles_tries)
+    }
+    
+    # Construction de la nouvelle matrice
+    matrice_nettoyee = []
+    for i in range(len(etats_utiles_tries)):
+        ancien_etat = etats_utiles_tries[i]
+        ligne_nettoyee = []
+        
+        for j in range(len(matrice[ancien_etat])):
+            etat_suivant = matrice[ancien_etat][j]
+            
+            # Gérer le non-déterminisme
+            if etat_suivant == -1:
+                ligne_nettoyee.append(-1)
+            elif isinstance(etat_suivant, list):
+                # Liste de destinations : garder seulement celles dans correspondance
+                nouveaux_etats = [correspondance[e] for e in etat_suivant if e in correspondance]
+                if not nouveaux_etats:
+                    ligne_nettoyee.append(-1)
+                elif len(nouveaux_etats) == 1:
+                    ligne_nettoyee.append(nouveaux_etats[0])
+                else:
+                    ligne_nettoyee.append(nouveaux_etats)
+            else:
+                # Transition déterministe
+                if etat_suivant in correspondance:
+                    ligne_nettoyee.append(correspondance[etat_suivant])
+                else:
+                    ligne_nettoyee.append(-1)
+        
+        matrice_nettoyee.append(ligne_nettoyee)
+    
+    # Mise à jour des états finaux et initial
+    finaux_nettoyes = [correspondance[f] for f in etats_finaux if f in correspondance]
+    
+    if etat_initial in correspondance:
+        initial_nettoye = correspondance[etat_initial]
+    else:
+        initial_nettoye = 0
+    
+    return {
+        "matrice": matrice_nettoyee,
+        "finaux": finaux_nettoyes,
+        "Initial": initial_nettoye,  # Garder comme entier, pas liste
+        "alphabet": automate.get("alphabet", [])
+    }
 
 
 # ----------- Interface Console -----------
@@ -555,6 +959,8 @@ def afficher_automate(automate, nom="Automate"):
         for val in ligne:
             if val == -1:
                 print(f"     -1", end="")
+            elif isinstance(val, list):
+                print(f"  {str(val):<5}", end="")
             else:
                 print(f"     {val}", end="")
         if i in automate.get("finaux", []):
@@ -710,7 +1116,7 @@ def menu_gestion_automates(automates, nom_courant):
         
         try:
             if choix == "0":
-                return None, None
+                return automates, nom_courant
             
             elif choix == "1":
                 auto = creer_automate_interactif()
@@ -722,7 +1128,6 @@ def menu_gestion_automates(automates, nom_courant):
                     nom_courant = nom
                     print(f"✓ Automate '{nom}' enregistré et sélectionné.")
                     input("\nAppuyez sur Entrée pour continuer...")
-                return automates, nom_courant
             
             elif choix == "2":
                 fichier = input("Nom du fichier [automates.txt] : ").strip() or "automates.txt"
@@ -735,8 +1140,30 @@ def menu_gestion_automates(automates, nom_courant):
                     
                     print(f"\n✓ {len(autos_charges)} automate(s) trouvé(s) dans '{fichier}'.")
                     for nom_fichier, auto in autos_charges.items():
-                        afficher_automate(auto, f"Automate '{nom_fichier}' du fichier")
-                        nom = input(f"Nom pour cet automate [{nom_fichier}] : ").strip() or nom_fichier
+                        print(f"\n--- Automate '{nom_fichier}' ---")
+                        finaux = auto.get("finaux", [])
+                        initial = auto.get("Initial", auto.get("initial", 0))
+                        alphabet = auto.get("alphabet", [])
+                        print(f"  États finaux : {finaux}")
+                        print(f"  État initial : {initial}")
+                        print(f"  Nombre d'états : {len(auto['matrice'])}")
+                        print(f"  Nombre de symboles : {len(auto['matrice'][0]) if auto['matrice'] else 0}")
+                        if alphabet:
+                            print(f"  Alphabet : {alphabet}")
+                        
+                        # Demander si on veut charger cet automate
+                        reponse = input(f"\nVoulez-vous charger cet automate '{nom_fichier}' ? (o/n) [o] : ").strip().lower()
+                        if reponse == 'n':
+                            print(f"  → Automate '{nom_fichier}' ignoré.")
+                            continue
+                        
+                        # Afficher plus de détails si demandé
+                        afficher_det = input("Afficher la matrice complète ? (o/n) [n] : ").strip().lower()
+                        if afficher_det == 'o':
+                            afficher_automate(auto, f"Automate '{nom_fichier}'")
+                        
+                        nom = input(f"Nom pour cet automate en mémoire [{nom_fichier}] : ").strip() or nom_fichier
+                        
                         # Gérer les doublons
                         nom_original = nom
                         compteur = 1
@@ -748,12 +1175,15 @@ def menu_gestion_automates(automates, nom_courant):
                                 nom = input("Entrez un nouveau nom : ").strip()
                                 if not nom:
                                     nom = f"{nom_original}_{compteur}"
+                                if nom not in automates:
+                                    break
                             else:
-                                break
+                                nom = f"{nom_original}_{compteur}"
+                                compteur += 1
                         
                         automates[nom] = auto
-                        print(f"  → '{nom}' ajouté.")
-                        if not nom_courant:  # Sélectionner le premier par défaut
+                        print(f"  → '{nom}' ajouté en mémoire.")
+                        if not nom_courant:  # Sélectionner le premier chargé par défaut
                             nom_courant = nom
                     input("\nAppuyez sur Entrée pour continuer...")
                 except Exception as e:
@@ -891,7 +1321,9 @@ def menu_operations(automates, nom_courant):
         print("9.  Enregistrer l'automate courant dans un fichier")
         print("10. Enregistrer tous les automates dans un fichier")
         print("11. Concaténer deux automates")
-        print("12. Changer l'automate courant")
+        print("12. Produit de deux automates")
+        print("13. Nettoyer l'automate (supprimer les états inutiles)")
+        print("14. Changer l'automate courant")
         print("0.  Retour au menu principal")
         print("-"*60)
         
@@ -966,7 +1398,7 @@ def menu_operations(automates, nom_courant):
             
             elif choix == "8":
                 auto = automates[nom_courant]
-                auto_no_eps = supprimer_epsilon(auto.copy())
+                auto_no_eps = eliminer_transitions_epsilon(auto.copy())
                 nom = input("\nNom pour l'automate sans epsilon [auto_sans_epsilon] : ").strip() or "auto_sans_epsilon"
                 if nom in automates:
                     reponse = input(f"Le nom '{nom}' existe déjà. Remplacer ? (o/n) [n] : ").strip().lower()
@@ -1060,6 +1492,67 @@ def menu_operations(automates, nom_courant):
                 input("\nAppuyez sur Entrée pour continuer...")
             
             elif choix == "12":
+                if len(automates) < 2:
+                    print("\n✗ Vous avez besoin d'au moins 2 automates pour le produit.")
+                    input("\nAppuyez sur Entrée pour continuer...")
+                    continue
+                
+                print("\nAutomates disponibles :")
+                for nom in automates:
+                    print(f"  • {nom}")
+                
+                print("\nSélection du premier automate :")
+                nom1 = input(f"Nom [{nom_courant}] : ").strip() or nom_courant
+                if nom1 not in automates:
+                    print(f"✗ Automate '{nom1}' introuvable.")
+                    input("\nAppuyez sur Entrée pour continuer...")
+                    continue
+                
+                print("\nSélection du deuxième automate :")
+                nom2 = input("Nom : ").strip()
+                if nom2 not in automates:
+                    print(f"✗ Automate '{nom2}' introuvable.")
+                    input("\nAppuyez sur Entrée pour continuer...")
+                    continue
+                
+                try:
+                    auto_produit = produit(automates[nom1].copy(), automates[nom2].copy())
+                    if auto_produit == 0:
+                        print("\n✗ Erreur : Les alphabets des deux automates n'ont aucun caractère en commun.")
+                        input("\nAppuyez sur Entrée pour continuer...")
+                        continue
+                    
+                    # Régulariser les tuples en entiers
+                    auto_produit_reg = regularisation_tuples(auto_produit)
+                    nom = input("\nNom pour l'automate produit [auto_produit] : ").strip() or "auto_produit"
+                    if nom in automates:
+                        reponse = input(f"Le nom '{nom}' existe déjà. Remplacer ? (o/n) [n] : ").strip().lower()
+                        if reponse != 'o':
+                            nom = f"{nom}_new"
+                    automates[nom] = auto_produit_reg
+                    print(f"✓ Automate produit sauvegardé sous le nom '{nom}'.")
+                    afficher_automate(auto_produit_reg, nom)
+                except Exception as e:
+                    print(f"\n✗ Erreur : {e}")
+                    import traceback
+                    traceback.print_exc()
+                input("\nAppuyez sur Entrée pour continuer...")
+            
+            elif choix == "13":
+                auto = automates[nom_courant]
+                auto_nettoye = nettoyer(auto.copy())
+                nom = input("\nNom pour l'automate nettoyé [auto_nettoye] : ").strip() or "auto_nettoye"
+                if nom in automates:
+                    reponse = input(f"Le nom '{nom}' existe déjà. Remplacer ? (o/n) [n] : ").strip().lower()
+                    if reponse != 'o':
+                        nom = f"{nom}_new"
+                automates[nom] = auto_nettoye
+                print(f"✓ Automate nettoyé sauvegardé sous le nom '{nom}'.")
+                print(f"  États avant : {len(auto['matrice'])}, États après : {len(auto_nettoye['matrice'])}")
+                afficher_automate(auto_nettoye, nom)
+                input("\nAppuyez sur Entrée pour continuer...")
+            
+            elif choix == "14":
                 print("\nAutomates disponibles :")
                 for nom in automates:
                     print(f"  • {nom}")
@@ -1073,7 +1566,7 @@ def menu_operations(automates, nom_courant):
                 input("\nAppuyez sur Entrée pour continuer...")
             
             else:
-                print("\n✗ Choix invalide. Veuillez choisir entre 0 et 12.")
+                print("\n✗ Choix invalide. Veuillez choisir entre 0 et 14.")
         
         except KeyboardInterrupt:
             print("\n\nRetour au menu...")
@@ -1111,10 +1604,14 @@ def menu_principal():
                 break
             
             elif choix == "1":
-                automates, nom_courant = menu_gestion_automates(automates, nom_courant)
+                result = menu_gestion_automates(automates, nom_courant)
+                if result is not None:
+                    automates, nom_courant = result
             
             elif choix == "2":
-                automates, nom_courant = menu_operations(automates, nom_courant)
+                result = menu_operations(automates, nom_courant)
+                if result is not None:
+                    automates, nom_courant = result
             
             else:
                 print("\n✗ Choix invalide. Veuillez choisir entre 0 et 2.")
@@ -1150,39 +1647,38 @@ def selectionner_automate(automates, nom_par_defaut=None):
 # ----------- Exemple -----------
 if __name__ == "__main__":
     import sys
-    
+    menu_principal()
     # Si des arguments sont passés, exécuter les tests
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        # Automates déterministes simples (sans epsilon)
-        a1 = {
-            "matrice": [[0,1,-1],[2,-1,-1],[-1,-1,2]],
-            "finaux": [2],
-            "Initial": 0,
-            "alphabet": ["a", "b", "c"]
-        }
-        a2 = {
-            "matrice": [[0,2],[1,2],[2,2]],
-            "finaux": [1,2],
-            "Initial": 0,
-            "alphabet": ["a", "b"]
-        }
+    # Automates déterministes simples (sans epsilon)
+        # a1 = {
+        #     "matrice": [[0,1,-1],[2,-1,-1],[-1,-1,2]],
+        #     "finaux": [2],
+        #     "Initial": 0,
+        #     "alphabet": ["a", "b", "c"]
+        # }
+        # a2 = {
+        #     "matrice": [[0,2],[1,2],[2,2]],
+        #     "finaux": [1,2],
+        #     "Initial": 0,
+        #     "alphabet": ["a", "b"]
+        # }
 
-        # Automate avec epsilon
-        a_eps = {
-            "matrice": [
-                [1, -1, -1],   # 0 --ε--> 1
-                [-1, 2, -1],   # 1 --a--> 2
-                [-1, -1, 2]    # 2 --b--> 2
-            ],
-            "finaux": [2],
-            "Initial": 0,
-            "alphabet": ["$", "a", "b"]
-        }
+        # # Automate avec epsilon
+        # a_eps = {
+        #     "matrice": [
+        #         [1, -1, -1],   # 0 --ε--> 1
+        #         [-1, 2, -1],   # 1 --a--> 2
+        #         [-1, -1, 2]    # 2 --b--> 2
+        #     ],
+        #     "finaux": [2],
+        #     "Initial": 0,
+        #     "alphabet": ["$", "a", "b"]
+        # }
 
-        print("Automate avec epsilon :", a_eps)
-        A_no_eps = epsilon_closure_automate(a_eps)
-        print("Automate sans epsilon :", A_no_eps)
-    else:
+        # print("Automate avec epsilon :", a_eps)
+        # A_no_eps = epsilon_closure_automate(a_eps)
+        # print("Automate sans epsilon :", A_no_eps)
         # Interface console
-        menu_principal()
+        
+        
     
