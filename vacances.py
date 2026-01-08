@@ -1,7 +1,6 @@
 #X={a,b,c} L={a*bac*}
 import re
 
-
 # Exemples de test (utilisés uniquement si --test est passé en argument)
 atrice = [[0,1,-1],[2,-1,-1],[-1,-1,2]]
 # version complète de matrice
@@ -223,6 +222,42 @@ def load_automates(fichier):
         automates[nom] = automate
     
     return automates
+
+def regularisation(Dautomate):
+    """ fonction qui permet de passer d'une matrice stockée dans un dictionnaire a une matrice stockée dans une liste de liste"""
+    #on crée une liste des différents états de notre matrice
+    etats= list(Dautomate["matrice"].keys())
+    #on associe à chaque état une valeur numérique (on numérote les états), grace à énumerate qui crée un couple (numéro, frozenset)
+    index= {}
+    for i, etat in enumerate(etats):
+        index[etat]=i
+    nbEtats = len(etats)
+    #nbChar= len(Dautomate["matrice"][0]) ne marche pas
+    nbChar = len(next(iter(Dautomate["matrice"].values())))
+    nouvelle_matrice =[]
+    # on parcours chaque etats et chaque charactère, et on traduit le frozenset en son équivalent numérique de l'index , on l'enregistre ensuite dans nouvelle_matrice
+    for e in etats:
+        ligne = []
+        for c in range(nbChar):
+            nouvel_etat = Dautomate["matrice"][e][c]
+            # on remplace chaque frozenset par son indice
+            if nouvel_etat in index :
+                ligne.append(index[nouvel_etat])
+            # si il n'y a pas de transition, on met la la transition vers l'état -1
+            else :
+                ligne.append(-1)
+        nouvelle_matrice.append(ligne)
+
+    print(index)
+    nouvel_initial= index[Dautomate["initial"]]
+    nouveaux_finaux= [index[f] for f in Dautomate["finaux"]]
+    A = { "matrice":nouvelle_matrice ,
+          "initial":nouvel_initial ,
+          "finaux": nouveaux_finaux ,
+          "alphabet": Dautomate["alphabet"]}
+    
+    return A
+
 
 
 def estDeterministe(automate):
