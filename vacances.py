@@ -1,14 +1,3 @@
-#X={a,b,c} L={a*bac*}
-import re
-
-# Exemples de test (utilisés uniquement si --test est passé en argument)
-atrice = [[0,1,-1],[2,-1,-1],[-1,-1,2]]
-# version complète de matrice
-Etats_Finaux=[2]
-m=[0,0,1,0,2,2,2,2] #aabacccc
-m1=[0,0,1,0,2,2,2,2,0] #aabacccca
-automate={"matrice":atrice,#un automate est décrit par un dictionnaire, une cle donne sa matrice d'adjacense et une autre ses états finaux
-          "finaux": [2]}
 
 
 
@@ -71,10 +60,6 @@ def Complementaire(automate):
     
     return Cautomate
 
-#la fonction dépend 1)du nombre de caractères de l'alphabet 2) du nombre de noeuds de la matrice
-# soit n le nombre de charactères de la fonction et m le nombre de noeuds dans l'automate, on a deux boucles imbriquées,l'une dépend de n, l'autre de n, donc on a une complexité temporelle en O(n*m), la complexitée est quadratique
-# on alloue de l'espace mémoire  pour nbEtats,nbChar, mais surtout pour la matrice (de n par m, que l'on transforme en matrice de n+1 par m), donc on occupe n*m+2 espace mémoires, et on a une complexitée spatiale en O((n+1)*m)+2
-#=O(n*m)
 
 def Analyse_mot(automate, mot, verbose=False):
     """
@@ -266,8 +251,7 @@ def regularisation(Dautomate):
                 ligne.append(-1)
         nouvelle_matrice.append(ligne)
 
-    print(index)
-    nouvel_initial= index[Dautomate["initial"]]
+    nouvel_initial = index[Dautomate["initial"]]
     nouveaux_finaux= [index[f] for f in Dautomate["finaux"]]
     A = { "matrice":nouvelle_matrice ,
           "initial":nouvel_initial ,
@@ -596,9 +580,6 @@ def concatener(automate1, automate2):
     automate_propre = eliminer_transitions_epsilon(automate_eps, epsilon=epsilon_symbole)
     return automate_propre
 
-def concatenation_alphabet(automate1, automate2):
-    """Concaténation des alphabets de deux automates."""
-
 
 def produit(A1, A2):
     """
@@ -793,38 +774,19 @@ def regularisation_tuples(A):
 
 def nettoyer(automate):
     """
-    Supprime les états inutiles d'un automate.
+    Supprime les états inutiles d'un automate
     
     Conserve uniquement les états accessibles depuis l'état initial
-    et co-accessibles (menant à un état final).
-    
-    Args:
-        automate: Automate avec format {"matrice": liste de listes, "alphabet": liste, "finaux": liste, "Initial": int}
-    
-    Returns:
-        Nouvel automate nettoyé (ne modifie pas l'original)
+    et co-accessibles (menant à un état final)
     """
-    # Faire une copie pour ne pas modifier l'original
-    automate = automate.copy()
-    automate["matrice"] = [ligne[:] for ligne in automate["matrice"]]
-    automate["finaux"] = automate["finaux"][:]
-    
     matrice = automate["matrice"]
-    etat_initial = automate.get("Initial", automate.get("initial", 0))
-    etats_finaux = set(automate.get("finaux", []))
-    
-    if not matrice or etat_initial >= len(matrice):
-        return automate
-    
-    # Fonction helper pour extraire les états de destination (gère le non-déterminisme)
-    def obtenir_etats(trans):
-        """Extrait les états de destination d'une transition."""
-        if trans == -1:
-            return []
-        elif isinstance(trans, list):
-            return [e for e in trans if e != -1 and isinstance(e, int)]
-        else:
-            return [trans] if isinstance(trans, int) and trans != -1 else []
+    # Gérer "Initial" ou "initial"
+    initial_val = automate.get("Initial", automate.get("initial", 0))
+    if isinstance(initial_val, list):
+        etat_initial = initial_val[0]
+    else:
+        etat_initial = initial_val
+    etats_finaux = set(automate["finaux"])
     
     # États atteignables depuis l'état initial
     etats_atteignables = {etat_initial}
@@ -834,18 +796,18 @@ def nettoyer(automate):
     while a_traiter:
         etat_courant = a_traiter.pop()
         
-        # Vérifier les limites
-        if etat_courant >= len(matrice):
-            continue
-        
         # On parcourt toutes les transitions sortantes de cet état
         for symbole in range(len(matrice[etat_courant])):
-            etat_suivant_trans = matrice[etat_courant][symbole]
-            etats_suivants = obtenir_etats(etat_suivant_trans)
-            
+            etat_suivant = matrice[etat_courant][symbole]
             # Si la transition existe et mène à un nouvel état
-            for etat_suivant in etats_suivants:
-                if etat_suivant not in etats_atteignables:
+            if etat_suivant != -1 and etat_suivant not in etats_atteignables:
+                # Gérer le non-déterminisme (si c'est une liste, prendre tous les états)
+                if isinstance(etat_suivant, list):
+                    for e in etat_suivant:
+                        if e != -1 and e not in etats_atteignables:
+                            etats_atteignables.add(e)
+                            a_traiter.append(e)
+                else:
                     etats_atteignables.add(etat_suivant)
                     a_traiter.append(etat_suivant)
     
@@ -857,33 +819,20 @@ def nettoyer(automate):
     while a_explorer:
         etat_cible = a_explorer.pop()
         
-        # Parcourir tous les états sources
         for etat_source in range(len(matrice)):
-            if etat_source >= len(matrice):
-                continue
-            
             # Vérifier si une transition mène de etat_source vers etat_cible
             for symbole in range(len(matrice[etat_source])):
                 trans = matrice[etat_source][symbole]
-                etats_dest = obtenir_etats(trans)
-                
-                if etat_cible in etats_dest and etat_source not in etats_co_atteignables:
+                if isinstance(trans, list):
+                    if etat_cible in trans and etat_source not in etats_co_atteignables:
+                        etats_co_atteignables.add(etat_source)
+                        a_explorer.append(etat_source)
+                elif trans == etat_cible and trans != -1 and etat_source not in etats_co_atteignables:
                     etats_co_atteignables.add(etat_source)
                     a_explorer.append(etat_source)
     
-    # États utiles : accessibles ET co-accessibles
+    # États utiles
     etats_utiles = etats_atteignables & etats_co_atteignables
-    
-    # Si l'état initial n'est pas dans les états utiles, il n'y a pas de chemin valide
-    if etat_initial not in etats_utiles:
-        # Retourner un automate vide avec juste l'état initial
-        return {
-            "matrice": [[-1] * (len(matrice[0]) if matrice else 0)],
-            "finaux": [],
-            "Initial": 0,
-            "alphabet": automate.get("alphabet", [])
-        }
-    
     etats_utiles_tries = sorted(etats_utiles)
     
     # Correspondance anciens indices → nouveaux indices
@@ -901,11 +850,10 @@ def nettoyer(automate):
         for j in range(len(matrice[ancien_etat])):
             etat_suivant = matrice[ancien_etat][j]
             
-            # Gérer le non-déterminisme
-            if etat_suivant == -1:
+            if etat_suivant == -1 or etat_suivant not in correspondance:
                 ligne_nettoyee.append(-1)
             elif isinstance(etat_suivant, list):
-                # Liste de destinations : garder seulement celles dans correspondance
+                # Gérer le non-déterminisme
                 nouveaux_etats = [correspondance[e] for e in etat_suivant if e in correspondance]
                 if not nouveaux_etats:
                     ligne_nettoyee.append(-1)
@@ -914,28 +862,19 @@ def nettoyer(automate):
                 else:
                     ligne_nettoyee.append(nouveaux_etats)
             else:
-                # Transition déterministe
-                if etat_suivant in correspondance:
-                    ligne_nettoyee.append(correspondance[etat_suivant])
-                else:
-                    ligne_nettoyee.append(-1)
+                ligne_nettoyee.append(correspondance[etat_suivant])
         
         matrice_nettoyee.append(ligne_nettoyee)
     
     # Mise à jour des états finaux et initial
     finaux_nettoyes = [correspondance[f] for f in etats_finaux if f in correspondance]
+    initial_nettoye = correspondance[etat_initial]
     
-    if etat_initial in correspondance:
-        initial_nettoye = correspondance[etat_initial]
-    else:
-        initial_nettoye = 0
+    automate["matrice"] = matrice_nettoyee
+    automate["finaux"] = finaux_nettoyes
+    automate["Initial"] = initial_nettoye  # Garder comme entier pour cohérence avec le reste
     
-    return {
-        "matrice": matrice_nettoyee,
-        "finaux": finaux_nettoyes,
-        "Initial": initial_nettoye,  # Garder comme entier, pas liste
-        "alphabet": automate.get("alphabet", [])
-    }
+    return automate
 
 
 # ----------- Interface Console -----------
@@ -1045,6 +984,274 @@ def creer_automate_interactif():
     print("\n✓ Automate créé avec succès !")
     afficher_automate(automate, "Nouvel automate")
     return automate
+
+
+def modifier_automate_interactif(automate):
+    """Modifie un automate de manière interactive."""
+    print("\n--- Modification d'un automate ---")
+    print("Vous pouvez modifier différentes parties de l'automate.")
+    print("Laissez vide pour conserver la valeur actuelle.\n")
+    
+    # Afficher l'automate actuel
+    afficher_automate(automate, "Automate actuel")
+    
+    # Copier l'automate pour modifications
+    auto_modifie = {
+        "matrice": [ligne[:] for ligne in automate["matrice"]],
+        "finaux": automate["finaux"][:],
+        "Initial": automate.get("Initial", automate.get("initial", 0)),
+        "alphabet": automate.get("alphabet", [])[:]
+    }
+    
+    nb_etats = len(auto_modifie["matrice"])
+    alphabet = auto_modifie["alphabet"]
+    nb_symboles = len(auto_modifie["matrice"][0]) if auto_modifie["matrice"] else 0
+    
+    # Menu de modification
+    while True:
+        print("\n--- Que voulez-vous modifier ? ---")
+        print("1. Modifier l'alphabet")
+        print("2. Modifier une transition spécifique")
+        print("3. Modifier toutes les transitions d'un état")
+        print("4. Modifier l'état initial")
+        print("5. Modifier les états finaux")
+        print("6. Ajouter un état")
+        print("7. Supprimer un état")
+        print("8. Voir l'automate modifié")
+        print("0. Terminer les modifications et enregistrer")
+        print("-"*60)
+        
+        choix = input("\nVotre choix : ").strip()
+        
+        try:
+            if choix == "0":
+                print("\n✓ Modifications terminées.")
+                # S'assurer que l'alphabet est à jour
+                auto_modifie["alphabet"] = alphabet if alphabet else []
+                return auto_modifie
+            
+            elif choix == "1":
+                print(f"\nAlphabet actuel : {alphabet if alphabet else 'Non défini'}")
+                print("Nouvel alphabet (séparé par des virgules, laissez vide pour conserver) :")
+                alpha_input = input("> ").strip()
+                if alpha_input:
+                    nouvel_alphabet = [s.strip() for s in alpha_input.split(",")]
+                    # Si l'alphabet change, il faut adapter la matrice
+                    if len(nouvel_alphabet) != nb_symboles:
+                        print(f"\n⚠ Attention : Le nombre de symboles change ({nb_symboles} -> {len(nouvel_alphabet)}).")
+                        print("Les transitions existantes seront réinitialisées à -1.")
+                        reponse = input("Continuer ? (o/n) [n] : ").strip().lower()
+                        if reponse == 'o':
+                            alphabet = nouvel_alphabet
+                            auto_modifie["alphabet"] = alphabet
+                            nb_symboles = len(alphabet)
+                            # Réinitialiser la matrice avec le nouveau nombre de symboles
+                            auto_modifie["matrice"] = [[-1] * nb_symboles for _ in range(nb_etats)]
+                            print("✓ Alphabet modifié. Matrice réinitialisée.")
+                        else:
+                            print("Annulé.")
+                    else:
+                        alphabet = nouvel_alphabet
+                        auto_modifie["alphabet"] = alphabet
+                        print(f"✓ Alphabet modifié : {alphabet}")
+            
+            elif choix == "2":
+                if nb_etats == 0:
+                    print("\n✗ Aucun état disponible.")
+                    continue
+                try:
+                    etat = int(input(f"État (0-{nb_etats-1}) : ").strip())
+                    if etat < 0 or etat >= nb_etats:
+                        print("✗ État invalide.")
+                        continue
+                    
+                    if alphabet:
+                        print(f"Symboles disponibles : {alphabet}")
+                        symbole_input = input("Symbole ou indice : ").strip()
+                        if symbole_input in alphabet:
+                            idx_symbole = alphabet.index(symbole_input)
+                        else:
+                            idx_symbole = int(symbole_input)
+                    else:
+                        idx_symbole = int(input(f"Indice du symbole (0-{nb_symboles-1}) : ").strip())
+                    
+                    if idx_symbole < 0 or idx_symbole >= nb_symboles:
+                        print("✗ Indice de symbole invalide.")
+                        continue
+                    
+                    print(f"Transition actuelle depuis état {etat} avec symbole {idx_symbole} : {auto_modifie['matrice'][etat][idx_symbole]}")
+                    print("Nouvelle transition (-1 pour aucune, entier pour état, liste [e1, e2] pour non-déterministe) :")
+                    val = input("> ").strip()
+                    if val == "":
+                        print("Aucune modification.")
+                    elif val == "-1":
+                        auto_modifie["matrice"][etat][idx_symbole] = -1
+                        print("✓ Transition supprimée.")
+                    elif val.startswith("[") and val.endswith("]"):
+                        try:
+                            auto_modifie["matrice"][etat][idx_symbole] = eval(val)
+                            print(f"✓ Transition non-déterministe modifiée : {auto_modifie['matrice'][etat][idx_symbole]}")
+                        except:
+                            print("✗ Format invalide.")
+                    else:
+                        try:
+                            auto_modifie["matrice"][etat][idx_symbole] = int(val)
+                            print(f"✓ Transition modifiée : {auto_modifie['matrice'][etat][idx_symbole]}")
+                        except ValueError:
+                            print("✗ Valeur invalide.")
+                except ValueError:
+                    print("✗ Erreur de saisie.")
+            
+            elif choix == "3":
+                if nb_etats == 0:
+                    print("\n✗ Aucun état disponible.")
+                    continue
+                try:
+                    etat = int(input(f"État à modifier (0-{nb_etats-1}) : ").strip())
+                    if etat < 0 or etat >= nb_etats:
+                        print("✗ État invalide.")
+                        continue
+                    
+                    print(f"\nModification de toutes les transitions de l'état {etat} :")
+                    for j in range(nb_symboles):
+                        symbole_label = alphabet[j] if alphabet and j < len(alphabet) else f"sym{j}"
+                        val_actuel = auto_modifie["matrice"][etat][j]
+                        val = input(f"  État {etat}, symbole '{symbole_label}' (actuel: {val_actuel}) [-1] : ").strip()
+                        if val == "":
+                            val = "-1"
+                        if val == "-1":
+                            auto_modifie["matrice"][etat][j] = -1
+                        elif val.startswith("[") and val.endswith("]"):
+                            try:
+                                auto_modifie["matrice"][etat][j] = eval(val)
+                            except:
+                                print(f"    Format invalide, conservé: {val_actuel}")
+                        else:
+                            try:
+                                auto_modifie["matrice"][etat][j] = int(val)
+                            except ValueError:
+                                print(f"    Valeur invalide, conservé: {val_actuel}")
+                    print("✓ Transitions de l'état modifiées.")
+                except ValueError:
+                    print("✗ Erreur de saisie.")
+            
+            elif choix == "4":
+                try:
+                    initial_actuel = auto_modifie["Initial"]
+                    print(f"État initial actuel : {initial_actuel}")
+                    nouveau_initial = input(f"Nouvel état initial (0-{nb_etats-1}) [laissez vide pour conserver] : ").strip()
+                    if nouveau_initial:
+                        nouveau_initial = int(nouveau_initial)
+                        if 0 <= nouveau_initial < nb_etats:
+                            auto_modifie["Initial"] = nouveau_initial
+                            print(f"✓ État initial modifié : {nouveau_initial}")
+                        else:
+                            print("✗ État invalide.")
+                    else:
+                        print("Aucune modification.")
+                except ValueError:
+                    print("✗ Erreur de saisie.")
+            
+            elif choix == "5":
+                finaux_actuels = auto_modifie["finaux"]
+                print(f"États finaux actuels : {finaux_actuels}")
+                print("Nouveaux états finaux (séparés par des virgules, laissez vide pour conserver) :")
+                finaux_input = input("> ").strip()
+                if finaux_input:
+                    try:
+                        nouveaux_finaux = [int(f.strip()) for f in finaux_input.split(",")]
+                        # Vérifier que tous les états sont valides
+                        if all(0 <= f < nb_etats for f in nouveaux_finaux):
+                            auto_modifie["finaux"] = nouveaux_finaux
+                            print(f"✓ États finaux modifiés : {nouveaux_finaux}")
+                        else:
+                            print("✗ Certains états sont invalides.")
+                    except ValueError:
+                        print("✗ Erreur de saisie.")
+                else:
+                    print("Aucune modification.")
+            
+            elif choix == "6":
+                print("\nAjout d'un nouvel état.")
+                # Créer une nouvelle ligne dans la matrice
+                nouvelle_ligne = [-1] * nb_symboles
+                auto_modifie["matrice"].append(nouvelle_ligne)
+                nb_etats += 1
+                print(f"✓ Nouvel état {nb_etats - 1} ajouté. Toutes ses transitions sont initialisées à -1.")
+                print("Utilisez l'option 2 ou 3 pour définir ses transitions.")
+            
+            elif choix == "7":
+                if nb_etats <= 1:
+                    print("\n✗ Impossible de supprimer le dernier état.")
+                    continue
+                try:
+                    etat_a_supprimer = int(input(f"État à supprimer (0-{nb_etats-1}) : ").strip())
+                    if etat_a_supprimer < 0 or etat_a_supprimer >= nb_etats:
+                        print("✗ État invalide.")
+                        continue
+                    
+                    # Supprimer la ligne de la matrice
+                    auto_modifie["matrice"].pop(etat_a_supprimer)
+                    nb_etats -= 1
+                    
+                    # Ajuster toutes les références d'états dans la matrice
+                    for i in range(nb_etats):
+                        for j in range(nb_symboles):
+                            trans = auto_modifie["matrice"][i][j]
+                            if isinstance(trans, list):
+                                # Pour les transitions non-déterministes
+                                nouvelles_trans = []
+                                for e in trans:
+                                    if e == etat_a_supprimer:
+                                        continue  # Supprimer la référence
+                                    elif e > etat_a_supprimer:
+                                        nouvelles_trans.append(e - 1)  # Décrémenter
+                                    else:
+                                        nouvelles_trans.append(e)
+                                auto_modifie["matrice"][i][j] = nouvelles_trans if nouvelles_trans else -1
+                            elif trans == etat_a_supprimer:
+                                auto_modifie["matrice"][i][j] = -1
+                            elif trans > etat_a_supprimer:
+                                auto_modifie["matrice"][i][j] = trans - 1
+                    
+                    # Ajuster l'état initial
+                    if auto_modifie["Initial"] == etat_a_supprimer:
+                        auto_modifie["Initial"] = 0
+                        print("⚠ L'état initial a été supprimé. Nouvel état initial : 0")
+                    elif auto_modifie["Initial"] > etat_a_supprimer:
+                        auto_modifie["Initial"] -= 1
+                    
+                    # Ajuster les états finaux
+                    nouveaux_finaux = []
+                    for f in auto_modifie["finaux"]:
+                        if f == etat_a_supprimer:
+                            continue
+                        elif f > etat_a_supprimer:
+                            nouveaux_finaux.append(f - 1)
+                        else:
+                            nouveaux_finaux.append(f)
+                    auto_modifie["finaux"] = nouveaux_finaux
+                    
+                    print(f"✓ État {etat_a_supprimer} supprimé. Les références ont été ajustées.")
+                except ValueError:
+                    print("✗ Erreur de saisie.")
+            
+            elif choix == "8":
+                auto_modifie["alphabet"] = alphabet if alphabet else []
+                afficher_automate(auto_modifie, "Automate modifié (en cours)")
+                input("\nAppuyez sur Entrée pour continuer...")
+            
+            else:
+                print("\n✗ Choix invalide.")
+        
+        except KeyboardInterrupt:
+            print("\n\nModifications annulées.")
+            return None
+        except Exception as e:
+            print(f"\n✗ Erreur : {e}")
+            import traceback
+            traceback.print_exc()
+            input("\nAppuyez sur Entrée pour continuer...")
 
 
 def analyser_mot_interactif(automate):
@@ -1324,6 +1531,7 @@ def menu_operations(automates, nom_courant):
         print("12. Produit de deux automates")
         print("13. Nettoyer l'automate (supprimer les états inutiles)")
         print("14. Changer l'automate courant")
+        print("15. Modifier l'automate courant")
         print("0.  Retour au menu principal")
         print("-"*60)
         
@@ -1565,8 +1773,39 @@ def menu_operations(automates, nom_courant):
                     print(f"✗ Automate '{nom}' introuvable.")
                 input("\nAppuyez sur Entrée pour continuer...")
             
+            elif choix == "15":
+                auto = automates[nom_courant]
+                auto_modifie = modifier_automate_interactif(auto.copy())
+                if auto_modifie is not None:
+                    # Demander si on remplace l'automate ou on crée une copie
+                    print("\nQue voulez-vous faire avec l'automate modifié ?")
+                    print("1. Remplacer l'automate courant")
+                    print("2. Enregistrer sous un nouveau nom")
+                    action = input("Choix [1] : ").strip() or "1"
+                    
+                    if action == "1":
+                        automates[nom_courant] = auto_modifie
+                        print(f"✓ Automate '{nom_courant}' modifié.")
+                        afficher_automate(auto_modifie, nom_courant)
+                    else:
+                        nouveau_nom = input("Nouveau nom : ").strip()
+                        if not nouveau_nom:
+                            nouveau_nom = f"{nom_courant}_modifie"
+                        # Gérer les doublons
+                        nom_final = nouveau_nom
+                        compteur = 1
+                        while nom_final in automates:
+                            nom_final = f"{nouveau_nom}_{compteur}"
+                            compteur += 1
+                        automates[nom_final] = auto_modifie
+                        print(f"✓ Automate modifié sauvegardé sous le nom '{nom_final}'.")
+                        afficher_automate(auto_modifie, nom_final)
+                else:
+                    print("Modifications annulées.")
+                input("\nAppuyez sur Entrée pour continuer...")
+            
             else:
-                print("\n✗ Choix invalide. Veuillez choisir entre 0 et 14.")
+                print("\n✗ Choix invalide. Veuillez choisir entre 0 et 15.")
         
         except KeyboardInterrupt:
             print("\n\nRetour au menu...")
@@ -1626,59 +1865,6 @@ def menu_principal():
             input("\nAppuyez sur Entrée pour continuer...")
 
 
-def selectionner_automate(automates, nom_par_defaut=None):
-    """Sélectionne un automate dans la liste."""
-    if not automates:
-        print("\n✗ Aucun automate disponible.")
-        return None
-    
-    print("\nAutomates disponibles :")
-    for nom in automates:
-        print(f"  • {nom}")
-    
-    nom = input(f"\nNom de l'automate [{nom_par_defaut}] : ").strip() or nom_par_defaut
-    if nom and nom in automates:
-        return automates[nom]
-    else:
-        print(f"✗ Automate '{nom}' introuvable.")
-        return None
-
-
 # ----------- Exemple -----------
 if __name__ == "__main__":
-    import sys
     menu_principal()
-    # Si des arguments sont passés, exécuter les tests
-    # Automates déterministes simples (sans epsilon)
-        # a1 = {
-        #     "matrice": [[0,1,-1],[2,-1,-1],[-1,-1,2]],
-        #     "finaux": [2],
-        #     "Initial": 0,
-        #     "alphabet": ["a", "b", "c"]
-        # }
-        # a2 = {
-        #     "matrice": [[0,2],[1,2],[2,2]],
-        #     "finaux": [1,2],
-        #     "Initial": 0,
-        #     "alphabet": ["a", "b"]
-        # }
-
-        # # Automate avec epsilon
-        # a_eps = {
-        #     "matrice": [
-        #         [1, -1, -1],   # 0 --ε--> 1
-        #         [-1, 2, -1],   # 1 --a--> 2
-        #         [-1, -1, 2]    # 2 --b--> 2
-        #     ],
-        #     "finaux": [2],
-        #     "Initial": 0,
-        #     "alphabet": ["$", "a", "b"]
-        # }
-
-        # print("Automate avec epsilon :", a_eps)
-        # A_no_eps = epsilon_closure_automate(a_eps)
-        # print("Automate sans epsilon :", A_no_eps)
-        # Interface console
-        
-        
-    
